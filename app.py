@@ -187,12 +187,90 @@ def render_ask_market():
     st.session_state.chat_history.append({"role": "assistant", "content": answer})
 
 
+# ---------- Find Jobs view (personalized search) ----------
+
+def render_find_jobs():
+    embed_model = load_embed_model()
+    try:
+        collection = load_collection()
+    except Exception:
+        st.error("Vector store not found. Run build_vector_store.py first.")
+        return
+
+    df = load_data()
+    cities = sorted(df["location_clean"].dropna().astype(str).str.split(",").str[0].str.strip().unique())
+    exp_levels = ["Any"] + sorted(df["experience_level_guess"].dropna().unique().tolist())
+
+    st.caption("Describe the job you're looking for in your own words — e.g. "
+               "\"SQL and Power BI analyst role for a fresher\" — and optionally narrow by city or level.")
+
+    query = st.text_input("What job are you looking for?", placeholder="e.g. Data Analyst with SQL and Excel, entry level")
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        city_filter = st.selectbox("City", ["Any"] + cities)
+    with col2:
+        exp_filter = st.selectbox("Experience level", exp_levels)
+    with col3:
+        num_results = st.slider("Number of results", 5, 30, 10)
+
+    search_clicked = st.button("Search jobs", type="primary")
+
+    if not search_clicked or not query.strip():
+        return
+
+    with st.spinner("Searching postings..."):
+        query_embedding = embed_model.encode([query]).tolist()
+        # Fetch the ENTIRE collection ranked by relevance, not just a capped
+        # top-N — otherwise a narrow filter (e.g. a rare experience level)
+        # can end up with zero matches even though matching postings exist,
+        # simply because they didn't make it into an arbitrary top-200 cut.
+        results = collection.query(query_embeddings=query_embedding, n_results=collection.count())
+
+        metas = results["metadatas"][0]
+        docs = results["documents"][0]
+        distances = results["distances"][0]
+
+        rows = []
+        for meta, doc, dist in zip(metas, docs, distances):
+            if city_filter != "Any" and city_filter.lower() not in meta.get("location", "").lower():
+                continue
+            if exp_filter != "Any" and meta.get("experience_level") != exp_filter:
+                continue
+            rows.append((meta, dist))
+
+        rows = rows[:num_results]
+
+    if not rows:
+        st.warning("No matching postings found. Try loosening a filter or rephrasing your search.")
+        return
+
+    st.success(f"Found {len(rows)} matching postings.")
+    for meta, dist in rows:
+        with st.container(border=True):
+            title = meta.get("title", "Untitled")
+            company = meta.get("company", "")
+            location = meta.get("location", "")
+            url = meta.get("url", "")
+            skills = meta.get("skills", "")
+            exp = meta.get("experience_level", "")
+
+            header = f"**{title}** — {company}" if company else f"**{title}**"
+            st.markdown(header)
+            st.caption(f"{location}  •  {exp}")
+            if skills:
+                st.markdown(f"Skills mentioned: {skills}")
+            if url and url != "nan":
+                st.markdown(f"[View posting]({url})")
+
+
 # ---------- Main layout ----------
 
 st.title("📊 Data Analyst Job Market Intelligence — India")
 
-tab1, tab2 = st.tabs(["Dashboard", "Ask the Market"])
+tab1, tab2, tab3 = st.tabs(["Dashboard", "Ask the Market", "Find Jobs"])
 with tab1:
     render_dashboard()
 with tab2:
     render_ask_market()
+with tab3:
+    render_find_jobs()
