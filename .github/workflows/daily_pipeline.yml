@@ -1,0 +1,56 @@
+name: Daily Data Pipeline
+
+# Runs the full data pipeline in GitHub's cloud, on a schedule — completely
+# independent of whether your own PC is on. Replaces the local Windows
+# Task Scheduler job for this purpose.
+#
+# Setup required (one-time, in your GitHub repo):
+#   1. Settings -> Actions -> General -> Workflow permissions ->
+#      select "Read and write permissions" -> Save
+#      (needed so this workflow can push the updated data back to the repo)
+#   2. Settings -> Secrets and variables -> Actions -> New repository secret
+#      Add: ADZUNA_APP_ID and ADZUNA_APP_KEY (same values as your local .env)
+
+on:
+  schedule:
+    # 02:30 UTC = 08:00 IST, daily
+    - cron: "30 2 * * *"
+  workflow_dispatch: {}  # lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the pipeline
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+        run: |
+          python fetch_jobs.py
+          python clean_data.py
+          python clean_and_extract.py
+          python fetch_full_descriptions.py
+          python eda.py
+          python build_vector_store.py
+
+      - name: Commit and push updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add da_job_postings_raw.csv da_job_postings_clean.csv charts chroma_db
+          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Automated daily data update $(date +'%Y-%m-%d')"
+          git push
