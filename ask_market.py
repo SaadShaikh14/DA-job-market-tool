@@ -24,7 +24,7 @@ load_dotenv()
 CHROMA_DIR = "chroma_db"
 COLLECTION_NAME = "job_postings"
 EMBED_MODEL = "all-MiniLM-L6-v2"
-LLM_MODEL = "llama-3.3-70b-versatile"  # good free-tier Groq model for this
+LLM_MODEL = "openai/gpt-oss-120b"  # llama-3.3-70b-versatile was deprecated by Groq in June 2026
 TOP_K = 8  # how many postings to retrieve as context
 
 SYSTEM_PROMPT = """You are a job-market research assistant. You answer \

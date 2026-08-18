@@ -31,7 +31,7 @@ CHARTS_DIR = "charts"
 CHROMA_DIR = "chroma_db"
 COLLECTION_NAME = "job_postings"
 EMBED_MODEL = "all-MiniLM-L6-v2"
-LLM_MODEL = "llama-3.3-70b-versatile"
+LLM_MODEL = "openai/gpt-oss-120b"  # llama-3.3-70b-versatile was deprecated by Groq in June 2026
 TOP_K = 8
 
 SYSTEM_PROMPT = """You are a job-market research assistant. You answer \
