@@ -236,6 +236,7 @@ button[kind="secondary"]:hover { background: var(--primary); color: #FFFFFF; }
 }
 .stat-card-b { border-left-color: var(--success); }
 .stat-card-c { border-left-color: var(--accent); }
+.stat-card-d { border-left-color: #2563EB; }
 .stat-icon { font-size: 1.3rem; }
 .stat-value { font-family: 'Poppins', sans-serif; font-size: 1.7rem; font-weight: 700; color: var(--text); margin-top: 0.15rem; }
 .stat-label { font-size: 0.82rem; color: var(--text-muted); margin-top: 0.1rem; }
@@ -351,14 +352,16 @@ def render_dashboard():
     total = len(df)
     matched = (df["num_skills"] > 0).sum()
     has_salary = (df["salary_min"].notna() | df["salary_max"].notna()).sum()
+    companies = df["company"].nunique()
 
     section_header("📊", "Market Overview")
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     stat_cards = [
         (c1, "📄", f"{total:,}", "Total postings", ""),
         (c2, "🎯", f"{matched:,}", f"Skills identified ({matched/total*100:.0f}%)", "stat-card-b"),
         (c3, "💰", f"{has_salary:,}", f"Salary disclosed ({has_salary/total*100:.0f}%)", "stat-card-c"),
+        (c4, "🏢", f"{companies:,}", "Companies hiring", "stat-card-d"),
     ]
     for col, icon, value, label, cls in stat_cards:
         with col:
@@ -377,27 +380,33 @@ def render_dashboard():
     st.write("")
     section_header("📈", "Trends & Breakdown")
 
-    chart_files = {
-        "top_skills.png": ("🔥", "Most In-Demand Skills"),
-        "skills_by_city.png": ("🏙️", "Top Skills by City"),
-        "experience_level.png": ("📶", "Experience Level Breakdown"),
-        "postings_over_time.png": ("📅", "Postings Over Time"),
-    }
-
-    cols = st.columns(2)
-    for i, (fname, (icon, title)) in enumerate(chart_files.items()):
+    def chart_card(fname, icon, title):
         path = Path(CHARTS_DIR) / fname
-        with cols[i % 2]:
-            with st.container(border=True):
-                st.markdown(
-                    f'<div class="header-row"><span class="card-icon">{icon}</span>'
-                    f'<span class="mini-title">{title}</span></div>',
-                    unsafe_allow_html=True,
-                )
-                if path.exists():
+        with st.container(border=True):
+            st.markdown(
+                f'<div class="header-row"><span class="card-icon">{icon}</span>'
+                f'<span class="mini-title">{title}</span></div>',
+                unsafe_allow_html=True,
+            )
+            if path.exists():
+                with st.expander("Click to view chart"):
                     st.image(str(path), use_container_width=True)
-                else:
-                    st.info(f"Chart not found — run eda.py to generate {fname}")
+            else:
+                st.info(f"Chart not found — run eda.py to generate {fname}")
+
+    # Full-width for the two charts that need horizontal room (15 skill
+    # labels; 5 side-by-side city panels), a 2-up row for the simpler pair —
+    # rather than one uniform grid that squeezes wide charts and wastes
+    # space on the narrow ones.
+    chart_card("top_skills.png", "🔥", "Most In-Demand Skills")
+    st.write("")
+    chart_card("skills_by_city.png", "🏙️", "Top Skills by City")
+    st.write("")
+    c1, c2 = st.columns(2)
+    with c1:
+        chart_card("experience_level.png", "📶", "Experience Level Breakdown")
+    with c2:
+        chart_card("postings_over_time.png", "📅", "Postings Over Time")
 
 
 # ---------- Ask the Market view ----------
