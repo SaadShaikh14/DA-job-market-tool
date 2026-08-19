@@ -240,8 +240,12 @@ def render_find_jobs():
     params = {
         "app_id": ADZUNA_APP_ID,
         "app_key": ADZUNA_APP_KEY,
-        "results_per_page": num_results,
-        "what": query,
+        "results_per_page": 50,  # Adzuna's max per page — fetch a large candidate
+                                  # pool so client-side title filtering below still
+                                  # has enough to work with (requesting only
+                                  # num_results upfront left too few after filtering)
+        "what": query,  # broad match — precision is handled client-side below
+                        # by preferring postings whose TITLE contains the query
         "sort_by": "date",
         "content-type": "application/json",
     }
@@ -261,8 +265,24 @@ def render_find_jobs():
         st.warning("No matching postings found. Try a different phrasing or drop the city filter.")
         return
 
-    st.success(f"Found {len(results)} matching postings.")
-    for job in results:
+    # Adzuna's phrase/word matching searches the FULL description, not just
+    # the title — so a query like "data entry" can match a "Senior Site
+    # Manager" post that merely mentions "data entry" once among its duties.
+    # Re-rank client-side: prefer postings whose TITLE actually contains the
+    # search words (what someone searching a role name almost always means),
+    # and only fall back to the broader description-matched set if that's empty.
+    query_words = [w.lower() for w in query.split() if w]
+    title_matches = [
+        job for job in results
+        if any(w in (job.get("title") or "").lower() for w in query_words)
+    ]
+    shown_results = (title_matches if title_matches else results)[:num_results]
+    if title_matches and len(title_matches) < len(results):
+        st.caption(f"Showing {len(title_matches)} postings with \"{query}\" in the job title "
+                    f"(filtered from {len(results)} broader matches for relevance).")
+
+    st.success(f"Found {len(shown_results)} matching postings.")
+    for job in shown_results:
         with st.container(border=True):
             title = job.get("title", "Untitled")
             company = (job.get("company") or {}).get("display_name", "")
