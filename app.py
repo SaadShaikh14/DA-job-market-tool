@@ -1,8 +1,9 @@
 """
 app.py
-Step 6: combines everything into one Streamlit app with two views:
+Step 7: combines everything into one Streamlit app with three views:
   - Dashboard: key stats + the charts from eda.py
   - Ask the Market: chat interface over the RAG layer (ask_market.py logic)
+  - Find Jobs: live any-industry search via the Adzuna API
 
 Run with:
     streamlit run app.py
@@ -14,8 +15,9 @@ exist.
 """
 
 import os
-import ast
+import html
 from pathlib import Path
+from datetime import datetime, timezone
 
 import pandas as pd
 import requests
@@ -44,6 +46,12 @@ ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
 ADZUNA_SEARCH_URL = "https://api.adzuna.com/v1/api/jobs/in/search/1"
 
+SUGGESTED_QUESTIONS = [
+    "What skills are most in demand right now?",
+    "Show me entry-level DA roles in Mumbai",
+    "Which cities have the most openings?",
+]
+
 SYSTEM_PROMPT = """You are a job-market research assistant. You answer \
 questions ONLY using the job postings provided as context below — do \
 not use outside knowledge about the job market. If none of the \
@@ -69,7 +77,217 @@ Keep the table and bullets grounded strictly in the retrieved \
 postings — don't pad with generic career advice not supported by the \
 data."""
 
-st.set_page_config(page_title="DA Job Market Intelligence", layout="wide")
+st.set_page_config(page_title="DA Job Market Intelligence", page_icon="💼", layout="wide")
+
+# ---------- Visual theme (colorful, job-portal style) ----------
+
+CUSTOM_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&family=Inter:wght@400;500;600&display=swap');
+
+:root {
+    --primary: #4F3FF0;
+    --primary-2: #7C3FE4;
+    --primary-light: #EEEBFF;
+    --success: #16A34A;
+    --success-light: #E8F9EE;
+    --accent: #FF6B4A;
+    --accent-dark: #E85A3A;
+    --bg: #F6F7FB;
+    --card-bg: #FFFFFF;
+    --text: #1A1B2E;
+    --text-muted: #6B6D85;
+    --border: #E7E8F2;
+}
+
+.stApp { background-color: var(--bg); font-family: 'Inter', sans-serif; }
+h1, h2, h3 { font-family: 'Poppins', sans-serif !important; }
+
+/* Hero banner */
+.hero-banner {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+    border-radius: 20px;
+    padding: 1.8rem 2.2rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    box-shadow: 0 10px 30px rgba(79,63,240,0.25);
+}
+.hero-eyebrow {
+    color: rgba(255,255,255,0.85);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.3rem;
+}
+.hero-title {
+    font-family: 'Poppins', sans-serif;
+    color: #FFFFFF;
+    font-size: 1.9rem;
+    font-weight: 700;
+    margin: 0 0 0.4rem 0;
+}
+.hero-tagline {
+    color: rgba(255,255,255,0.9);
+    font-size: 0.92rem;
+    max-width: 620px;
+    line-height: 1.5;
+    margin: 0;
+}
+.hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #FFFFFF;
+    padding: 0.45rem 0.95rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* Live pulse dot */
+.pulse-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #22C55E;
+}
+@media (prefers-reduced-motion: no-preference) {
+    .pulse-dot { animation: pulse 1.8s infinite; }
+}
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(34,197,94,0.5); }
+    70% { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
+    100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
+
+/* Tabs as colorful pills */
+.stTabs [data-baseweb="tab-list"] { gap: 0.5rem; border-bottom: none; }
+.stTabs [data-baseweb="tab"] {
+    height: auto;
+    padding: 0.6rem 1.4rem;
+    background-color: var(--card-bg);
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    font-weight: 600;
+    color: var(--text-muted);
+    transition: all 0.15s ease;
+}
+.stTabs [data-baseweb="tab"]:hover { border-color: var(--primary); color: var(--primary); }
+.stTabs [data-baseweb="tab-highlight"] { background-color: transparent; }
+.stTabs [data-baseweb="tab-border"] { display: none; }
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg, var(--primary), var(--primary-2)) !important;
+    color: #FFFFFF !important;
+    border-color: transparent !important;
+}
+.stTabs [data-baseweb="tab"] p { color: inherit !important; font-weight: 600; }
+
+/* Force widget labels + inputs to follow our light theme, regardless of
+   the viewer's system/browser dark mode (Streamlit's native widgets
+   otherwise inherit the ambient theme and can go invisible-on-white) */
+[data-testid="stWidgetLabel"] p { color: var(--text) !important; font-weight: 600; }
+.stTextInput input {
+    background-color: var(--card-bg) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+}
+
+/* Buttons */
+.stButton>button {
+    border-radius: 999px;
+    font-weight: 600;
+    padding: 0.5rem 1.25rem;
+    transition: all 0.15s ease;
+    border: 1px solid var(--border);
+}
+button[kind="primary"] {
+    background: linear-gradient(135deg, var(--primary), var(--primary-2));
+    border: none;
+    color: #FFFFFF;
+    box-shadow: 0 4px 14px rgba(79,63,240,0.3);
+}
+button[kind="primary"]:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(79,63,240,0.4); }
+button[kind="secondary"] { background: var(--primary-light); color: var(--primary); border: 1px solid var(--primary-light); }
+button[kind="secondary"]:hover { background: var(--primary); color: #FFFFFF; }
+
+/* Section headers (reused across tabs) */
+.header-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+.header-row .card-icon { font-size: 1.2rem; }
+.section-title { font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 1.15rem; color: var(--text); }
+.mini-title { font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 1rem; color: var(--text); }
+.section-subtitle { color: var(--text-muted); font-size: 0.9rem; margin: -0.2rem 0 0.9rem 1.7rem; }
+
+/* Stat cards */
+.stat-card {
+    background: var(--card-bg);
+    border-radius: 16px;
+    padding: 1.2rem 1.4rem;
+    box-shadow: 0 2px 10px rgba(26,27,46,0.06);
+    border-left: 4px solid var(--primary);
+}
+.stat-card-b { border-left-color: var(--success); }
+.stat-card-c { border-left-color: var(--accent); }
+.stat-icon { font-size: 1.3rem; }
+.stat-value { font-family: 'Poppins', sans-serif; font-size: 1.7rem; font-weight: 700; color: var(--text); margin-top: 0.15rem; }
+.stat-label { font-size: 0.82rem; color: var(--text-muted); margin-top: 0.1rem; }
+
+/* Chart cards (wrap st.container(border=True)) */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border-radius: 16px !important;
+    box-shadow: 0 2px 10px rgba(26,27,46,0.06);
+}
+
+/* Job cards (Find Jobs tab) */
+.job-card {
+    background: var(--card-bg);
+    border-radius: 16px;
+    padding: 1.1rem 1.3rem;
+    margin-bottom: 0.9rem;
+    border-left: 4px solid var(--primary);
+    box-shadow: 0 2px 10px rgba(26,27,46,0.06);
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.job-card:hover { box-shadow: 0 6px 20px rgba(26,27,46,0.12); transform: translateY(-1px); }
+.job-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem; flex-wrap: wrap; }
+.job-title { font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 1.08rem; color: var(--text); margin: 0; }
+.job-company { color: var(--text-muted); font-size: 0.88rem; margin-top: 0.15rem; }
+.job-meta { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.55rem; font-size: 0.85rem; color: var(--text-muted); }
+.salary-pill {
+    background: var(--success-light); color: var(--success); font-weight: 600; font-size: 0.8rem;
+    padding: 0.3rem 0.7rem; border-radius: 999px; white-space: nowrap;
+}
+.posted-pill { display: inline-flex; align-items: center; gap: 0.4rem; }
+.view-posting-link {
+    display: inline-block; margin-top: 0.85rem; padding: 0.4rem 1rem;
+    background: var(--accent); color: #FFFFFF !important; font-weight: 600; font-size: 0.85rem;
+    border-radius: 999px; text-decoration: none; transition: all 0.15s ease;
+}
+.view-posting-link:hover { background: var(--accent-dark); transform: translateY(-1px); }
+
+/* Chat */
+[data-testid="stChatMessage"] { border-radius: 14px; box-shadow: 0 1px 6px rgba(26,27,46,0.05); }
+.suggested-label { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; margin: 0.3rem 0 0.5rem; }
+
+/* Footer */
+.app-footer {
+    text-align: center; color: var(--text-muted); font-size: 0.85rem;
+    padding: 1.6rem 0 0.5rem; display: flex; justify-content: center; gap: 0.5rem; flex-wrap: wrap;
+}
+.app-footer a { color: var(--primary); font-weight: 600; text-decoration: none; }
+.app-footer a:hover { text-decoration: underline; }
+</style>
+"""
+
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
 # ---------- Cached resources (loaded once per server session) ----------
@@ -99,6 +317,32 @@ def load_data():
     return df
 
 
+def section_header(icon, title, subtitle=None):
+    st.markdown(
+        f'<div class="header-row"><span class="card-icon">{icon}</span>'
+        f'<span class="section-title">{title}</span></div>',
+        unsafe_allow_html=True,
+    )
+    if subtitle:
+        st.markdown(f'<p class="section-subtitle">{subtitle}</p>', unsafe_allow_html=True)
+
+
+def format_posted(created_str):
+    """Turn Adzuna's ISO 'created' timestamp into a short 'posted X ago' label."""
+    if not created_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+        days = (datetime.now(timezone.utc) - dt).days
+        if days <= 0:
+            return "Posted today"
+        if days == 1:
+            return "Posted 1 day ago"
+        return f"Posted {days} days ago"
+    except Exception:
+        return None
+
+
 # ---------- Dashboard view ----------
 
 def render_dashboard():
@@ -108,35 +352,52 @@ def render_dashboard():
     matched = (df["num_skills"] > 0).sum()
     has_salary = (df["salary_min"].notna() | df["salary_max"].notna()).sum()
 
+    section_header("📊", "Market Overview")
+
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total postings", f"{total:,}")
-    c2.metric("Postings with skills identified", f"{matched:,}", f"{matched/total*100:.0f}%")
-    c3.metric("Postings with salary data", f"{has_salary:,}", f"{has_salary/total*100:.0f}%")
+    stat_cards = [
+        (c1, "📄", f"{total:,}", "Total postings", ""),
+        (c2, "🎯", f"{matched:,}", f"Skills identified ({matched/total*100:.0f}%)", "stat-card-b"),
+        (c3, "💰", f"{has_salary:,}", f"Salary disclosed ({has_salary/total*100:.0f}%)", "stat-card-c"),
+    ]
+    for col, icon, value, label, cls in stat_cards:
+        with col:
+            st.markdown(
+                f'<div class="stat-card {cls}"><div class="stat-icon">{icon}</div>'
+                f'<div class="stat-value">{value}</div><div class="stat-label">{label}</div></div>',
+                unsafe_allow_html=True,
+            )
 
     st.caption(
-        "Data refreshes daily via an automated pipeline (Adzuna API → cleaning → "
+        "ℹ️ Data refreshes daily via an automated pipeline (Adzuna API → cleaning → "
         "skill extraction). Salary coverage is inherently low — most Indian job "
         "postings on Adzuna don't disclose salary."
     )
 
-    st.divider()
+    st.write("")
+    section_header("📈", "Trends & Breakdown")
 
     chart_files = {
-        "top_skills.png": "Most In-Demand Skills",
-        "skills_by_city.png": "Top Skills by City",
-        "experience_level.png": "Experience Level Breakdown",
-        "postings_over_time.png": "Postings Over Time",
+        "top_skills.png": ("🔥", "Most In-Demand Skills"),
+        "skills_by_city.png": ("🏙️", "Top Skills by City"),
+        "experience_level.png": ("📶", "Experience Level Breakdown"),
+        "postings_over_time.png": ("📅", "Postings Over Time"),
     }
 
     cols = st.columns(2)
-    for i, (fname, title) in enumerate(chart_files.items()):
+    for i, (fname, (icon, title)) in enumerate(chart_files.items()):
         path = Path(CHARTS_DIR) / fname
         with cols[i % 2]:
-            st.subheader(title)
-            if path.exists():
-                st.image(str(path), use_container_width=True)
-            else:
-                st.info(f"Chart not found — run eda.py to generate {fname}")
+            with st.container(border=True):
+                st.markdown(
+                    f'<div class="header-row"><span class="card-icon">{icon}</span>'
+                    f'<span class="mini-title">{title}</span></div>',
+                    unsafe_allow_html=True,
+                )
+                if path.exists():
+                    st.image(str(path), use_container_width=True)
+                else:
+                    st.info(f"Chart not found — run eda.py to generate {fname}")
 
 
 # ---------- Ask the Market view ----------
@@ -166,6 +427,11 @@ def render_ask_market():
         st.error("Vector store not found. Run build_vector_store.py first.")
         return
 
+    section_header(
+        "💬", "Ask the Market",
+        "Ask in plain English — answers are grounded only in real, current postings, never generic advice.",
+    )
+
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
@@ -173,7 +439,18 @@ def render_ask_market():
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
+    if not st.session_state.chat_history:
+        st.markdown('<p class="suggested-label">Try asking:</p>', unsafe_allow_html=True)
+        chip_cols = st.columns(len(SUGGESTED_QUESTIONS))
+        for col, q in zip(chip_cols, SUGGESTED_QUESTIONS):
+            with col:
+                if st.button(q, key=f"chip_{q}", use_container_width=True):
+                    st.session_state.pending_question = q
+                    st.rerun()
+
     question = st.chat_input("Ask about the Data Analyst job market...")
+    if not question and st.session_state.get("pending_question"):
+        question = st.session_state.pop("pending_question")
     if not question:
         return
 
@@ -207,7 +484,7 @@ def render_ask_market():
 
         st.markdown(answer)
         if sources:
-            with st.expander("Sources used"):
+            with st.expander("🔗 Sources used"):
                 for s in sources:
                     st.markdown(f"- {s}")
 
@@ -222,17 +499,19 @@ def render_find_jobs():
                  "file (or Streamlit Cloud Secrets) and restart.")
         return
 
-    st.caption("Search for any job, any industry — this searches live, current postings "
-               "directly (not limited to the Data Analyst dataset used elsewhere in this app).")
+    section_header(
+        "🔍", "Find Jobs — Any Industry",
+        "Live search across all industries — not limited to the Data Analyst dataset used elsewhere in this app.",
+    )
 
-    query = st.text_input("What job are you looking for?", placeholder="e.g. graphic designer, electrician, data entry")
+    query = st.text_input("💼 What job are you looking for?", placeholder="e.g. graphic designer, electrician, data entry")
     col1, col2 = st.columns([1, 1])
     with col1:
-        city_filter = st.text_input("City (optional)", placeholder="e.g. Mumbai")
+        city_filter = st.text_input("📍 City (optional)", placeholder="e.g. Mumbai")
     with col2:
-        num_results = st.slider("Number of results", 5, 30, 10)
+        num_results = st.slider("🔢 Number of results", 5, 30, 10)
 
-    search_clicked = st.button("Search jobs", type="primary")
+    search_clicked = st.button("🔍 Search jobs", type="primary")
 
     if not search_clicked or not query.strip():
         return
@@ -283,33 +562,77 @@ def render_find_jobs():
 
     st.success(f"Found {len(shown_results)} matching postings.")
     for job in shown_results:
-        with st.container(border=True):
-            title = job.get("title", "Untitled")
-            company = (job.get("company") or {}).get("display_name", "")
-            location = (job.get("location") or {}).get("display_name", "")
-            url = job.get("redirect_url", "")
-            salary_min = job.get("salary_min")
-            salary_max = job.get("salary_max")
+        title = html.escape(job.get("title", "Untitled"))
+        company = html.escape((job.get("company") or {}).get("display_name", ""))
+        location = html.escape((job.get("location") or {}).get("display_name", ""))
+        url = job.get("redirect_url", "")
+        salary_min = job.get("salary_min")
+        salary_max = job.get("salary_max")
+        posted = format_posted(job.get("created"))
 
-            header = f"**{title}** — {company}" if company else f"**{title}**"
-            st.markdown(header)
-            st.caption(location)
-            if salary_min or salary_max:
-                st.markdown(f"Salary: {salary_min:,.0f} – {salary_max:,.0f}" if salary_min and salary_max
-                            else f"Salary: {salary_min or salary_max:,.0f}")
-            if url:
-                st.markdown(f"[View posting]({url})")
+        salary_html = ""
+        if salary_min or salary_max:
+            if salary_min and salary_max:
+                salary_text = f"₹{salary_min:,.0f} – ₹{salary_max:,.0f}"
+            else:
+                salary_text = f"₹{salary_min or salary_max:,.0f}"
+            salary_html = f'<span class="salary-pill">💰 {salary_text}</span>'
+
+        posted_html = (
+            f'<span class="posted-pill"><span class="pulse-dot"></span>{posted}</span>'
+            if posted else ""
+        )
+        company_html = f'<div class="job-company">🏢 {company}</div>' if company else ""
+        link_html = (
+            f'<a class="view-posting-link" href="{url}" target="_blank">View posting →</a>'
+            if url else ""
+        )
+
+        card_html = (
+            f'<div class="job-card">'
+            f'<div class="job-card-top">'
+            f'<div><p class="job-title">{title}</p>{company_html}</div>'
+            f'{salary_html}'
+            f'</div>'
+            f'<div class="job-meta"><span>📍 {location}</span>{posted_html}</div>'
+            f'{link_html}'
+            f'</div>'
+        )
+        st.markdown(card_html, unsafe_allow_html=True)
 
 
 # ---------- Main layout ----------
 
+st.markdown(
+    """
+    <div class="hero-banner">
+        <div class="hero-text">
+            <div class="hero-eyebrow">💼 JOB MARKET INTELLIGENCE</div>
+            <div class="hero-title">Data Analyst Job Market — India</div>
+            <p class="hero-tagline">Real postings tracked daily across India — skills in demand,
+            live openings, and a research assistant that only answers from real data.</p>
+        </div>
+        <div class="hero-badge"><span class="pulse-dot"></span> Live · auto-refreshed daily</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-st.title("📊 Data Analyst Job Market Intelligence — India")
-
-tab1, tab2, tab3 = st.tabs(["Dashboard", "Ask the Market", "Find Jobs"])
+tab1, tab2, tab3 = st.tabs(["🏠 Dashboard", "💬 Ask the Market", "🔍 Find Jobs"])
 with tab1:
     render_dashboard()
 with tab2:
     render_ask_market()
 with tab3:
     render_find_jobs()
+
+st.markdown(
+    """
+    <div class="app-footer">
+        <span>📊 Data refreshes daily via an automated pipeline</span>
+        <span>·</span>
+        <a href="https://github.com/SaadShaikh14/DA-job-market-tool" target="_blank">View source on GitHub</a>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)

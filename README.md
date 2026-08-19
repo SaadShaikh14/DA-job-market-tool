@@ -1,16 +1,15 @@
 # 📊 Data Analyst Job Market Intelligence Tool
 
-A live job-market analytics tool that tracks Data Analyst postings across India, refreshes itself automatically every day — even when no one's machine is on — and answers natural-language questions about the market, grounded in real, current postings.
+A live job-market analytics tool that tracks Data Analyst postings across India, refreshes itself automatically every day — even when no one's machine is on — and answers natural-language questions about the market, grounded in real, current postings. Built with a colorful, job-portal-style interface: browse live postings, ask questions in plain English, and track market trends, all in one place.
 
 **🔗 Live app:** https://da-job-market-tool-pquy4zwmepvwrotcd9g3fx.streamlit.app
-
 **📦 Repo:** https://github.com/SaadShaikh14/DA-job-market-tool
 
 ## What it does
 
 - **Dashboard** — key stats and charts: most in-demand skills, skill demand by city, experience-level breakdown, and posting trends over time
 - **Ask the Market** — a chat interface for questions like *"What skills do Mumbai companies want for DA freshers?"*. Every answer follows a consistent structure: a table of the matching postings, a bullet-point breakdown of what they reveal (geography, skill clusters, seniority spread), and a one-line bottom-line takeaway — grounded only in real postings (RAG), with sources shown
-- **Find Jobs** — a personal search: describe the job you want in your own words, optionally filter by city or experience level, and get back a ranked list of real matching postings with links to apply
+- **Find Jobs — Any Industry** — a live search that isn't limited to Data Analyst roles: describe any job in your own words, optionally filter by city, and get back a ranked list of real, current postings with direct links to apply
 
 ## How it works
 
@@ -19,19 +18,19 @@ A live job-market analytics tool that tracks Data Analyst postings across India,
 3. **Skill & experience extraction** — scans postings for ~35 known Data Analyst skills and guesses an experience level from the title, with a gap-filling pass that revisits the original posting page for postings where no skills were found
 4. **Analytics layer** — generates charts (top skills, skills by city, experience breakdown, posting trends)
 5. **RAG layer** — embeds postings locally (sentence-transformers), stores them in a Chroma vector database, and retrieves relevant postings to ground LLM answers (Groq / `openai/gpt-oss-120b`)
-6. **App** — everything combined into one Streamlit app with three tabs
+6. **App** — everything combined into one Streamlit app with three tabs, styled with a custom colorful theme
 
 ### Fully automated, cloud-side
 
-The entire pipeline (collect → clean → extract → analyze → rebuild the vector store) runs **daily via GitHub Actions**, not a local scheduled task — so it keeps running even if no personal machine is powered on. Each run commits the refreshed data straight back to this repo, which the deployed Streamlit app then reflects. See [`.github/workflows/daily_pipeline.yml`](.github/workflows/daily_pipeline.yml).
+The entire pipeline (collect → clean → extract → analyze → rebuild the vector store) runs **daily via GitHub Actions**, not a local scheduled task — so it keeps running even if no personal machine is powered on. Each run commits the refreshed data straight back to this repo, which the deployed Streamlit app then reflects. See [`.github/workflows/daily_pipeline.yml`](https://github.com/SaadShaikh14/DA-job-market-tool/blob/main/.github/workflows/daily_pipeline.yml).
 
 ## Tech stack
 
-Python · pandas · requests · BeautifulSoup · sentence-transformers · Chroma · Groq (`openai/gpt-oss-120b`) · Streamlit · GitHub Actions
+Python · pandas · requests · BeautifulSoup · sentence-transformers · Chroma · Groq (`openai/gpt-oss-120b`) · Streamlit (custom CSS theme) · GitHub Actions
 
 ## Running locally
 
-```bash
+```
 pip install -r requirements.txt
 
 # Collect and process data — or just run everything at once:
@@ -57,4 +56,4 @@ To run the daily automation yourself on a fork: add `ADZUNA_APP_ID` and `ADZUNA_
 
 ## Project background
 
-Built as a portfolio project for a Data Analyst job search — see [`PROJECT_NARRATIVE.md`](PROJECT_NARRATIVE.md) for the full story of what it does, why it's built the way it is, and a suggested resume framing.
+Built as a portfolio project for a Data Analyst job search — see [`PROJECT_NARRATIVE.md`](https://github.com/SaadShaikh14/DA-job-market-tool/blob/main/PROJECT_NARRATIVE.md) for the full story of what it does, why it's built the way it is, and a suggested resume framing.
