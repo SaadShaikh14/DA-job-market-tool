@@ -18,6 +18,7 @@ import ast
 from pathlib import Path
 
 import pandas as pd
+import requests
 import streamlit as st
 import chromadb
 from sentence_transformers import SentenceTransformer
@@ -33,6 +34,15 @@ COLLECTION_NAME = "job_postings"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 LLM_MODEL = "openai/gpt-oss-120b"  # llama-3.3-70b-versatile was deprecated by Groq in June 2026
 TOP_K = 8
+
+# Find Jobs searches ALL industries live via Adzuna, separate from the
+# Dashboard/Ask the Market data (which stays Data-Analyst-focused, from
+# the pre-built dataset/vector store). A general "any job, any industry"
+# search can't be pre-embedded for every possible query, so this tab
+# just calls Adzuna's search directly with whatever the user typed.
+ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
+ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
+ADZUNA_SEARCH_URL = "https://api.adzuna.com/v1/api/jobs/in/search/1"
 
 SYSTEM_PROMPT = """You are a job-market research assistant. You answer \
 questions ONLY using the job postings provided as context below — do \
@@ -204,30 +214,22 @@ def render_ask_market():
     st.session_state.chat_history.append({"role": "assistant", "content": answer})
 
 
-# ---------- Find Jobs view (personalized search) ----------
+# ---------- Find Jobs view (live search, ANY industry) ----------
 
 def render_find_jobs():
-    embed_model = load_embed_model()
-    try:
-        collection = load_collection()
-    except Exception:
-        st.error("Vector store not found. Run build_vector_store.py first.")
+    if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
+        st.error("ADZUNA_APP_ID / ADZUNA_APP_KEY not found. Add them to your .env "
+                 "file (or Streamlit Cloud Secrets) and restart.")
         return
 
-    df = load_data()
-    cities = sorted(df["location_clean"].dropna().astype(str).str.split(",").str[0].str.strip().unique())
-    exp_levels = ["Any"] + sorted(df["experience_level_guess"].dropna().unique().tolist())
+    st.caption("Search for any job, any industry — this searches live, current postings "
+               "directly (not limited to the Data Analyst dataset used elsewhere in this app).")
 
-    st.caption("Describe the job you're looking for in your own words — e.g. "
-               "\"SQL and Power BI analyst role for a fresher\" — and optionally narrow by city or level.")
-
-    query = st.text_input("What job are you looking for?", placeholder="e.g. Data Analyst with SQL and Excel, entry level")
-    col1, col2, col3 = st.columns([1, 1, 1])
+    query = st.text_input("What job are you looking for?", placeholder="e.g. graphic designer, electrician, data entry")
+    col1, col2 = st.columns([1, 1])
     with col1:
-        city_filter = st.selectbox("City", ["Any"] + cities)
+        city_filter = st.text_input("City (optional)", placeholder="e.g. Mumbai")
     with col2:
-        exp_filter = st.selectbox("Experience level", exp_levels)
-    with col3:
         num_results = st.slider("Number of results", 5, 30, 10)
 
     search_clicked = st.button("Search jobs", type="primary")
@@ -235,52 +237,52 @@ def render_find_jobs():
     if not search_clicked or not query.strip():
         return
 
-    with st.spinner("Searching postings..."):
-        query_embedding = embed_model.encode([query]).tolist()
-        # Fetch the ENTIRE collection ranked by relevance, not just a capped
-        # top-N — otherwise a narrow filter (e.g. a rare experience level)
-        # can end up with zero matches even though matching postings exist,
-        # simply because they didn't make it into an arbitrary top-200 cut.
-        results = collection.query(query_embeddings=query_embedding, n_results=collection.count())
+    params = {
+        "app_id": ADZUNA_APP_ID,
+        "app_key": ADZUNA_APP_KEY,
+        "results_per_page": num_results,
+        "what": query,
+        "sort_by": "date",
+        "content-type": "application/json",
+    }
+    if city_filter.strip():
+        params["where"] = city_filter.strip()
 
-        metas = results["metadatas"][0]
-        docs = results["documents"][0]
-        distances = results["distances"][0]
+    with st.spinner("Searching live postings..."):
+        try:
+            resp = requests.get(ADZUNA_SEARCH_URL, params=params, timeout=15)
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+        except requests.exceptions.RequestException as e:
+            st.error(f"Search failed: {e}")
+            return
 
-        rows = []
-        for meta, doc, dist in zip(metas, docs, distances):
-            if city_filter != "Any" and city_filter.lower() not in meta.get("location", "").lower():
-                continue
-            if exp_filter != "Any" and meta.get("experience_level") != exp_filter:
-                continue
-            rows.append((meta, dist))
-
-        rows = rows[:num_results]
-
-    if not rows:
-        st.warning("No matching postings found. Try loosening a filter or rephrasing your search.")
+    if not results:
+        st.warning("No matching postings found. Try a different phrasing or drop the city filter.")
         return
 
-    st.success(f"Found {len(rows)} matching postings.")
-    for meta, dist in rows:
+    st.success(f"Found {len(results)} matching postings.")
+    for job in results:
         with st.container(border=True):
-            title = meta.get("title", "Untitled")
-            company = meta.get("company", "")
-            location = meta.get("location", "")
-            url = meta.get("url", "")
-            skills = meta.get("skills", "")
-            exp = meta.get("experience_level", "")
+            title = job.get("title", "Untitled")
+            company = (job.get("company") or {}).get("display_name", "")
+            location = (job.get("location") or {}).get("display_name", "")
+            url = job.get("redirect_url", "")
+            salary_min = job.get("salary_min")
+            salary_max = job.get("salary_max")
 
             header = f"**{title}** — {company}" if company else f"**{title}**"
             st.markdown(header)
-            st.caption(f"{location}  •  {exp}")
-            if skills:
-                st.markdown(f"Skills mentioned: {skills}")
-            if url and url != "nan":
+            st.caption(location)
+            if salary_min or salary_max:
+                st.markdown(f"Salary: {salary_min:,.0f} – {salary_max:,.0f}" if salary_min and salary_max
+                            else f"Salary: {salary_min or salary_max:,.0f}")
+            if url:
                 st.markdown(f"[View posting]({url})")
 
 
 # ---------- Main layout ----------
+
 
 st.title("📊 Data Analyst Job Market Intelligence — India")
 
