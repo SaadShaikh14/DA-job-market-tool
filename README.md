@@ -3,6 +3,7 @@
 A live job-market analytics tool that tracks Data Analyst postings across India, refreshes itself automatically every day — even when no one's machine is on — and answers natural-language questions about the market, grounded in real, current postings. Built with a colorful, job-portal-style interface: browse live postings, ask questions in plain English, and track market trends, all in one place.
 
 **🔗 Live app:** https://da-job-market-tool-pquy4zwmepvwrotcd9g3fx.streamlit.app
+
 **📦 Repo:** https://github.com/SaadShaikh14/DA-job-market-tool
 
 ## What it does
