@@ -4,13 +4,14 @@ A live job-market analytics tool that tracks Data Analyst postings across India,
 
 **🔗 Live app:** https://da-job-market-tool-pquy4zwmepvwrotcd9g3fx.streamlit.app
 
-**📦 Repo:** https://github.com/SaadShaikh14/DA-job-market-tool
+**📁 Repo:** https://github.com/SaadShaikh14/DA-job-market-tool
 
 ## What it does
 
 - **Dashboard** — key stats and charts: most in-demand skills, skill demand by city, experience-level breakdown, and posting trends over time
 - **Ask the Market** — a chat interface for questions like *"What skills do Mumbai companies want for DA freshers?"*. Every answer follows a consistent structure: a table of the matching postings, a bullet-point breakdown of what they reveal (geography, skill clusters, seniority spread), and a one-line bottom-line takeaway — grounded only in real postings (RAG), with sources shown
 - **Find Jobs — Any Industry** — a live search that isn't limited to Data Analyst roles: describe any job in your own words, optionally filter by city, and get back a ranked list of real, current postings with direct links to apply
+- **Accounts** — a lightweight sign-up/login gate (username, email, phone, password) sits in front of the app; every chat question and job search is logged per-user to a Postgres database, so usage patterns can be reviewed later
 
 ## How it works
 
@@ -19,7 +20,8 @@ A live job-market analytics tool that tracks Data Analyst postings across India,
 3. **Skill & experience extraction** — scans postings for ~35 known Data Analyst skills and guesses an experience level from the title, with a gap-filling pass that revisits the original posting page for postings where no skills were found
 4. **Analytics layer** — generates charts (top skills, skills by city, experience breakdown, posting trends)
 5. **RAG layer** — embeds postings locally (sentence-transformers), stores them in a Chroma vector database, and retrieves relevant postings to ground LLM answers (Groq / `openai/gpt-oss-120b`)
-6. **App** — everything combined into one Streamlit app with three tabs, styled with a custom colorful theme
+6. **Auth & activity logging** — user accounts (bcrypt-hashed passwords) and per-user activity logs are stored in Postgres (hosted on [Neon](https://neon.tech)), so every question asked and job search run is tied to an account
+7. **App** — everything combined into one Streamlit app with three tabs, styled with a custom colorful theme, sitting behind the login/signup gate
 
 ### Fully automated, cloud-side
 
@@ -27,7 +29,7 @@ The entire pipeline (collect → clean → extract → analyze → rebuild the v
 
 ## Tech stack
 
-Python · pandas · requests · BeautifulSoup · sentence-transformers · Chroma · Groq (`openai/gpt-oss-120b`) · Streamlit (custom CSS theme) · GitHub Actions
+Python · pandas · requests · BeautifulSoup · sentence-transformers · Chroma · Groq (`openai/gpt-oss-120b`) · Streamlit (custom CSS theme) · PostgreSQL (Neon) · bcrypt · GitHub Actions
 
 ## Running locally
 
@@ -52,6 +54,15 @@ ADZUNA_APP_ID=your_id_here
 ADZUNA_APP_KEY=your_key_here
 GROQ_API_KEY=your_key_here
 ```
+
+You'll also need a Postgres database for user accounts and activity logging (e.g. a free [Neon](https://neon.tech) project). Add the connection string to `.streamlit/secrets.toml`:
+
+```toml
+[postgres]
+url = "postgresql://user:password@host/dbname?sslmode=require"
+```
+
+(For local dev without a `secrets.toml`, a `DATABASE_URL` entry in your `.env` file works too.)
 
 To run the daily automation yourself on a fork: add `ADZUNA_APP_ID` and `ADZUNA_APP_KEY` as repository secrets (Settings → Secrets and variables → Actions), and enable "Read and write permissions" for workflows (Settings → Actions → General).
 

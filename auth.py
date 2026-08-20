@@ -1,0 +1,191 @@
+"""
+auth.py
+Handles user accounts (sign up / log in) and per-user activity logging,
+backed by a PostgreSQL database.
+
+Expects a connection string either in Streamlit secrets:
+
+    # .streamlit/secrets.toml
+    [postgres]
+    url = "postgresql://user:password@host:port/dbname?sslmode=require"
+
+or, for local dev without secrets.toml, in a DATABASE_URL env var
+(e.g. in your .env file, alongside GROQ_API_KEY etc.).
+
+Passwords are never stored in plain text — only a bcrypt hash.
+"""
+
+import os
+import re
+
+import bcrypt
+import psycopg2
+import psycopg2.extras
+import psycopg2.pool
+import streamlit as st
+
+USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,30}$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Accepts an optional leading "+" followed by 10-15 digits (covers Indian
+# 10-digit mobile numbers with or without a country code, e.g. +91XXXXXXXXXX).
+PHONE_RE = re.compile(r"^\+?[0-9]{10,15}$")
+
+
+def _get_connection_string():
+    try:
+        return st.secrets["postgres"]["url"]
+    except Exception:
+        pass
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "No database connection configured. Add a [postgres] url to "
+            ".streamlit/secrets.toml (or DATABASE_URL to your .env)."
+        )
+    return url
+
+
+@st.cache_resource
+def _get_pool():
+    """A small pool of connections, created once per server process and
+    reused across reruns/users. Avoids paying a fresh TCP+TLS+auth
+    handshake to Neon on every single login/signup/log_activity call -
+    that per-call reconnect cost was the main source of repeated slowness
+    beyond Neon's one-time cold-start wake-up."""
+    return psycopg2.pool.SimpleConnectionPool(
+        minconn=1,
+        maxconn=5,
+        dsn=_get_connection_string(),
+        connect_timeout=10,
+    )
+
+
+class _PooledConnection:
+    """Context-manager wrapper so callers can keep using
+    `with get_connection() as conn:` unchanged, while the underlying
+    connection is borrowed from (and returned to) the pool instead of
+    being opened and closed from scratch each time."""
+
+    def __enter__(self):
+        self._pool = _get_pool()
+        self._conn = self._pool.getconn()
+        return self._conn
+
+    def __exit__(self, exc_type, exc, tb):
+        # A connection that errored mid-transaction shouldn't be handed
+        # back dirty - roll it back before returning it to the pool.
+        if exc_type is not None:
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+        self._pool.putconn(self._conn)
+
+
+def get_connection():
+    return _PooledConnection()
+
+
+@st.cache_resource
+def init_db():
+    """Create the users/activity_log tables if they don't exist yet.
+    Cached so this only runs once per server process, not on every rerun."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(30) UNIQUE NOT NULL,
+                    email VARCHAR(255) UNIQUE NOT NULL,
+                    phone VARCHAR(20) UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """)
+            # Safe to re-run against a users table created before this column
+            # existed. NOT NULL/UNIQUE aren't added retroactively here since
+            # that would fail against existing rows with no phone value -
+            # only new installs get the constraint via CREATE TABLE above.
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(20);")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS activity_log (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    activity_type VARCHAR(30) NOT NULL,
+                    details JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_type ON activity_log(activity_type);")
+        conn.commit()
+    return True
+
+
+def create_user(username, email, phone, password):
+    """Sign up a new user. Returns (True, user_dict) on success,
+    or (False, error_message) on failure."""
+    username = username.strip()
+    email = email.strip().lower()
+    phone = phone.strip().replace(" ", "").replace("-", "")
+
+    if not USERNAME_RE.match(username):
+        return False, "Username must be 3-30 characters: letters, numbers, or underscore only."
+    if not EMAIL_RE.match(email):
+        return False, "Enter a valid email address."
+    if not PHONE_RE.match(phone):
+        return False, "Enter a valid phone number (10-15 digits, optional leading +)."
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters."
+
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            try:
+                cur.execute(
+                    "INSERT INTO users (username, email, phone, password_hash) "
+                    "VALUES (%s, %s, %s, %s) RETURNING id, username, email, phone, created_at;",
+                    (username, email, phone, password_hash),
+                )
+                user = cur.fetchone()
+                conn.commit()
+                return True, dict(user)
+            except psycopg2.errors.UniqueViolation:
+                conn.rollback()
+                return False, "That username, email, or phone number is already registered."
+
+
+def authenticate_user(username, password):
+    """Returns the user dict if credentials are valid, else None."""
+    username = username.strip()
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, username, email, password_hash FROM users WHERE username = %s;",
+                (username,),
+            )
+            user = cur.fetchone()
+
+    if not user:
+        return None
+    if not bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
+        return None
+    return {"id": user["id"], "username": user["username"], "email": user["email"]}
+
+
+def log_activity(user_id, activity_type, details=None):
+    """Record one row of user activity. Never raises — a logging failure
+    shouldn't break the app for the user, so errors are swallowed after
+    a single attempt."""
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO activity_log (user_id, activity_type, details) "
+                    "VALUES (%s, %s, %s);",
+                    (user_id, activity_type, psycopg2.extras.Json(details or {})),
+                )
+            conn.commit()
+    except Exception:
+        pass

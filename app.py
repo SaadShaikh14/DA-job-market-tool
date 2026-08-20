@@ -27,6 +27,8 @@ from sentence_transformers import SentenceTransformer
 from groq import Groq
 from dotenv import load_dotenv
 
+import auth
+
 load_dotenv()
 
 CSV_PATH = "da_job_postings_clean.csv"
@@ -285,6 +287,18 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 }
 .app-footer a { color: var(--primary); font-weight: 600; text-decoration: none; }
 .app-footer a:hover { text-decoration: underline; }
+
+/* Auth gate (login / sign up) */
+.auth-eyebrow {
+    color: var(--primary); font-size: 0.75rem; font-weight: 700;
+    letter-spacing: 0.08em; text-align: center; margin: 1.5rem 0 0.3rem;
+}
+.auth-title {
+    font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 1.5rem;
+    color: var(--text); text-align: center; margin-bottom: 0.3rem;
+}
+.auth-subtitle { color: var(--text-muted); font-size: 0.9rem; text-align: center; margin-bottom: 1.6rem; }
+.user-bar { text-align: right; color: var(--text-muted); font-size: 0.85rem; padding: 0.4rem 0 0.2rem; }
 </style>
 """
 
@@ -342,6 +356,70 @@ def format_posted(created_str):
         return f"Posted {days} days ago"
     except Exception:
         return None
+
+
+# ---------- Auth gate (login / sign up, backed by Postgres) ----------
+
+def render_auth_gate():
+    """Shown instead of the app when no one is logged in yet. Blocks
+    further execution (st.stop()) until login/signup succeeds."""
+    _, center, _ = st.columns([1, 1.3, 1])
+    with center:
+        st.markdown('<div class="auth-eyebrow">💼 JOB MARKET INTELLIGENCE</div>', unsafe_allow_html=True)
+        st.markdown('<div class="auth-title">Welcome</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="auth-subtitle">Log in or create an account to explore live postings, '
+            'skill trends, and the AI research assistant.</p>',
+            unsafe_allow_html=True,
+        )
+
+        login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
+
+        with login_tab:
+            with st.form("login_form"):
+                username = st.text_input("Username")
+                password = st.text_input("Password", type="password")
+                submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
+            if submitted:
+                if not username or not password:
+                    st.error("Enter both a username and password.")
+                else:
+                    user = auth.authenticate_user(username, password)
+                    if user:
+                        st.session_state.user = user
+                        st.rerun()
+                    else:
+                        st.error("Incorrect username or password.")
+
+        with signup_tab:
+            with st.form("signup_form"):
+                new_username = st.text_input("Choose a username", help="3-30 characters: letters, numbers, underscore")
+                new_email = st.text_input("Email")
+                new_phone = st.text_input("Phone number", help="10-15 digits, optional leading +, e.g. +919876543210")
+                new_password = st.text_input("Choose a password", type="password", help="At least 8 characters")
+                submitted = st.form_submit_button("Create account", type="primary", use_container_width=True)
+            if submitted:
+                ok, result = auth.create_user(new_username, new_email, new_phone, new_password)
+                if ok:
+                    st.session_state.user = {
+                        "id": result["id"], "username": result["username"], "email": result["email"],
+                    }
+                    st.rerun()
+                else:
+                    st.error(result)
+
+    st.stop()
+
+
+try:
+    with st.spinner("Connecting..."):
+        auth.init_db()
+except Exception as e:
+    st.error(f"⚠️ Could not connect to the database: {e}")
+    st.stop()
+
+if "user" not in st.session_state:
+    render_auth_gate()
 
 
 # ---------- Dashboard view ----------
@@ -467,6 +545,8 @@ def render_ask_market():
     with st.chat_message("user"):
         st.markdown(question)
 
+    auth.log_activity(st.session_state.user["id"], "chat_question", {"question": question})
+
     with st.chat_message("assistant"):
         with st.spinner("Searching postings..."):
             query_embedding = embed_model.encode([question]).tolist()
@@ -570,6 +650,23 @@ def render_find_jobs():
                     f"(filtered from {len(results)} broader matches for relevance).")
 
     st.success(f"Found {len(shown_results)} matching postings.")
+
+    # "Jobs viewed" is logged as the set shown for this search — there's no
+    # click-through tracking on the outbound Adzuna links, so this records
+    # what the user saw rather than which link they clicked.
+    auth.log_activity(
+        st.session_state.user["id"], "job_search",
+        {
+            "query": query,
+            "city": city_filter or None,
+            "num_results": len(shown_results),
+            "jobs_shown": [
+                {"title": j.get("title"), "company": (j.get("company") or {}).get("display_name")}
+                for j in shown_results[:10]
+            ],
+        },
+    )
+
     for job in shown_results:
         title = html.escape(job.get("title", "Untitled"))
         company = html.escape((job.get("company") or {}).get("display_name", ""))
@@ -611,6 +708,14 @@ def render_find_jobs():
 
 
 # ---------- Main layout ----------
+
+user_col, logout_col = st.columns([5, 1])
+with user_col:
+    st.markdown(f'<div class="user-bar">👤 Logged in as <b>{st.session_state.user["username"]}</b></div>', unsafe_allow_html=True)
+with logout_col:
+    if st.button("Log out", use_container_width=True):
+        del st.session_state.user
+        st.rerun()
 
 st.markdown(
     """

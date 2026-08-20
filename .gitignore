@@ -9,3 +9,6 @@ venv/
 
 # Logs
 pipeline_log.txt
+ 
+# Streamlit secrets - contains DB password, never commit 
+.streamlit/secrets.toml 
