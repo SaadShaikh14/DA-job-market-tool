@@ -289,15 +289,42 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 .app-footer a:hover { text-decoration: underline; }
 
 /* Auth gate (login / sign up) */
-.auth-eyebrow {
-    color: var(--primary); font-size: 0.75rem; font-weight: 700;
-    letter-spacing: 0.08em; text-align: center; margin: 1.5rem 0 0.3rem;
+.auth-wrapper { max-width: 420px; margin: 3rem auto 0; }
+.auth-icon {
+    width: 52px; height: 52px; margin: 0 auto 1rem; border-radius: 14px;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+    display: flex; align-items: center; justify-content: center; font-size: 1.5rem;
+    box-shadow: 0 6px 16px rgba(79,63,240,0.25);
 }
 .auth-title {
-    font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 1.5rem;
-    color: var(--text); text-align: center; margin-bottom: 0.3rem;
+    font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 1.6rem;
+    color: var(--text); text-align: center; margin-bottom: 0.35rem;
 }
-.auth-subtitle { color: var(--text-muted); font-size: 0.9rem; text-align: center; margin-bottom: 1.6rem; }
+.auth-subtitle { color: var(--text-muted); font-size: 0.88rem; text-align: center; line-height: 1.5; margin-bottom: 1.8rem; }
+
+.auth-wrapper [data-testid="stVerticalBlockBorderWrapper"] {
+    border-radius: 16px !important; border: 1px solid var(--border) !important;
+    box-shadow: 0 4px 20px rgba(26,27,46,0.06) !important; padding: 0.4rem;
+}
+.auth-wrapper .stTabs [data-baseweb="tab-list"] {
+    gap: 0.25rem; background: var(--bg); padding: 0.25rem; border-radius: 10px; margin-bottom: 1.4rem;
+}
+.auth-wrapper .stTabs [data-baseweb="tab"] {
+    border-radius: 8px; font-weight: 600; color: var(--text-muted); font-size: 0.88rem;
+    padding: 0.45rem 0; flex: 1; justify-content: center;
+}
+.auth-wrapper .stTabs [aria-selected="true"] { background: var(--card-bg) !important; color: var(--primary) !important; }
+.auth-wrapper [data-testid="stTextInput"] label { font-weight: 600; color: var(--text); font-size: 0.85rem; }
+.auth-wrapper [data-testid="stTextInput"] input {
+    border-radius: 9px; border: 1.3px solid var(--border); padding: 0.5rem 0.75rem; font-size: 0.92rem;
+}
+.auth-wrapper [data-testid="stTextInput"] input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); }
+.auth-wrapper .stFormSubmitButton button {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%) !important;
+    border: none !important; border-radius: 9px !important; font-weight: 600 !important;
+    padding: 0.55rem 0 !important; margin-top: 0.3rem; transition: opacity 0.15s ease !important;
+}
+.auth-wrapper .stFormSubmitButton button:hover { opacity: 0.92; }
 .user-bar { text-align: right; color: var(--text-muted); font-size: 0.85rem; padding: 0.4rem 0 0.2rem; }
 </style>
 """
@@ -365,48 +392,181 @@ def render_auth_gate():
     further execution (st.stop()) until login/signup succeeds."""
     _, center, _ = st.columns([1, 1.3, 1])
     with center:
-        st.markdown('<div class="auth-eyebrow">💼 JOB MARKET INTELLIGENCE</div>', unsafe_allow_html=True)
-        st.markdown('<div class="auth-title">Welcome</div>', unsafe_allow_html=True)
+        st.markdown('<div class="auth-wrapper">', unsafe_allow_html=True)
+
         st.markdown(
+            '<div class="auth-icon">💼</div>'
+            '<div class="auth-title">Welcome back</div>'
             '<p class="auth-subtitle">Log in or create an account to explore live postings, '
             'skill trends, and the AI research assistant.</p>',
             unsafe_allow_html=True,
         )
 
-        login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
+        with st.container(border=True):
+            login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
 
-        with login_tab:
-            with st.form("login_form"):
-                username = st.text_input("Username")
-                password = st.text_input("Password", type="password")
-                submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
-            if submitted:
-                if not username or not password:
-                    st.error("Enter both a username and password.")
+            with login_tab:
+                pending_login = st.session_state.get("pending_login")
+
+                if pending_login is None:
+                    # Stage 1: check username/password, then email an OTP.
+                    with st.form("login_form"):
+                        username = st.text_input("Username", placeholder="Enter your username")
+                        password = st.text_input("Password", type="password", placeholder="Enter your password")
+                        submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
+                    if submitted:
+                        if not username or not password:
+                            st.error("Enter both a username and password.")
+                        else:
+                            user = auth.authenticate_user(username, password)
+                            if not user:
+                                st.error("Incorrect username or password.")
+                            else:
+                                try:
+                                    otp_challenge = auth.make_otp_challenge(user["email"])
+                                except Exception as e:
+                                    st.error(f"Couldn't send the verification email: {e}")
+                                else:
+                                    st.session_state.pending_login = {"user": user, "otp": otp_challenge}
+                                    st.rerun()
+
                 else:
-                    user = auth.authenticate_user(username, password)
-                    if user:
-                        st.session_state.user = user
+                    # Stage 2: verify the OTP, then actually log in.
+                    st.success(f"Code sent to {pending_login['user']['email']}. It expires in "
+                               f"{auth.OTP_VALID_MINUTES} minutes.")
+                    with st.form("login_verify_otp_form"):
+                        entered_otp = st.text_input(
+                            "Enter the 6-digit code", placeholder="123456", max_chars=6,
+                        )
+                        verify_col, resend_col, cancel_col = st.columns(3)
+                        verify_clicked = verify_col.form_submit_button(
+                            "Verify & log in", type="primary", use_container_width=True,
+                        )
+                        resend_clicked = resend_col.form_submit_button(
+                            "Resend code", use_container_width=True,
+                        )
+                        cancel_clicked = cancel_col.form_submit_button(
+                            "Cancel", use_container_width=True,
+                        )
+
+                    if verify_clicked:
+                        ok, err = auth.verify_otp(pending_login["otp"], entered_otp)
+                        if not ok:
+                            st.error(err)
+                        else:
+                            st.session_state.user = pending_login["user"]
+                            del st.session_state.pending_login
+                            st.rerun()
+
+                    if resend_clicked:
+                        try:
+                            st.session_state.pending_login["otp"] = auth.make_otp_challenge(
+                                pending_login["user"]["email"],
+                            )
+                        except Exception as e:
+                            st.error(f"Couldn't resend the code: {e}")
+                        else:
+                            st.rerun()
+
+                    if cancel_clicked:
+                        del st.session_state.pending_login
                         st.rerun()
-                    else:
-                        st.error("Incorrect username or password.")
 
-        with signup_tab:
-            with st.form("signup_form"):
-                new_username = st.text_input("Choose a username", help="3-30 characters: letters, numbers, underscore")
-                new_email = st.text_input("Email")
-                new_phone = st.text_input("Phone number", help="10-15 digits, optional leading +, e.g. +919876543210")
-                new_password = st.text_input("Choose a password", type="password", help="At least 8 characters")
-                submitted = st.form_submit_button("Create account", type="primary", use_container_width=True)
-            if submitted:
-                ok, result = auth.create_user(new_username, new_email, new_phone, new_password)
-                if ok:
-                    st.session_state.user = {
-                        "id": result["id"], "username": result["username"], "email": result["email"],
-                    }
-                    st.rerun()
+            with signup_tab:
+                pending = st.session_state.get("pending_signup")
+
+                if pending is None:
+                    # Stage 1: collect details, check availability, email an OTP.
+                    with st.form("signup_form"):
+                        new_username = st.text_input(
+                            "Choose a username", placeholder="letters, numbers, underscore",
+                            help="3-30 characters: letters, numbers, or underscore only",
+                        )
+                        new_email = st.text_input("Email", placeholder="you@example.com")
+                        new_phone = st.text_input(
+                            "Phone number", placeholder="9876543210",
+                            help="10-digit mobile number, no country code",
+                        )
+                        new_password = st.text_input(
+                            "Choose a password", type="password", placeholder="At least 8 characters",
+                            help="At least 8 characters",
+                        )
+                        submitted = st.form_submit_button("Send OTP", type="primary", use_container_width=True)
+                    if submitted:
+                        if len(new_password) < 8:
+                            st.error("Password must be at least 8 characters.")
+                        else:
+                            ok, err = auth.check_availability(new_username, new_email, new_phone)
+                            if not ok:
+                                st.error(err)
+                            else:
+                                try:
+                                    otp_challenge = auth.make_otp_challenge(new_email.strip().lower())
+                                except Exception as e:
+                                    st.error(f"Couldn't send the verification email: {e}")
+                                else:
+                                    st.session_state.pending_signup = {
+                                        "username": new_username.strip(),
+                                        "email": new_email.strip().lower(),
+                                        "phone": new_phone.strip().replace(" ", "").replace("-", ""),
+                                        "password": new_password,
+                                        "otp": otp_challenge,
+                                    }
+                                    st.rerun()
+
                 else:
-                    st.error(result)
+                    # Stage 2: verify the OTP, then actually create the account.
+                    st.success(f"Code sent to {pending['email']}. It expires in "
+                               f"{auth.OTP_VALID_MINUTES} minutes.")
+                    with st.form("verify_otp_form"):
+                        entered_otp = st.text_input(
+                            "Enter the 6-digit code", placeholder="123456", max_chars=6,
+                        )
+                        verify_col, resend_col, cancel_col = st.columns(3)
+                        verify_clicked = verify_col.form_submit_button(
+                            "Verify & create account", type="primary", use_container_width=True,
+                        )
+                        resend_clicked = resend_col.form_submit_button(
+                            "Resend code", use_container_width=True,
+                        )
+                        cancel_clicked = cancel_col.form_submit_button(
+                            "Cancel", use_container_width=True,
+                        )
+
+                    if verify_clicked:
+                        ok, err = auth.verify_otp(pending["otp"], entered_otp)
+                        if not ok:
+                            st.error(err)
+                        else:
+                            ok, result = auth.create_user(
+                                pending["username"], pending["email"],
+                                pending["phone"], pending["password"],
+                            )
+                            if ok:
+                                del st.session_state.pending_signup
+                                st.session_state.user = {
+                                    "id": result["id"], "username": result["username"], "email": result["email"],
+                                }
+                                st.rerun()
+                            else:
+                                # Someone else grabbed the username/email/phone
+                                # while this OTP was pending - start over.
+                                del st.session_state.pending_signup
+                                st.error(result)
+
+                    if resend_clicked:
+                        try:
+                            st.session_state.pending_signup["otp"] = auth.make_otp_challenge(pending["email"])
+                        except Exception as e:
+                            st.error(f"Couldn't resend the code: {e}")
+                        else:
+                            st.rerun()
+
+                    if cancel_clicked:
+                        del st.session_state.pending_signup
+                        st.rerun()
+
+        st.markdown('</div>', unsafe_allow_html=True)  # .auth-wrapper
 
     st.stop()
 

@@ -17,6 +17,12 @@ Passwords are never stored in plain text — only a bcrypt hash.
 
 import os
 import re
+import ssl
+import hashlib
+import smtplib
+import secrets as pysecrets
+from email.mime.text import MIMEText
+from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import psycopg2
@@ -26,9 +32,13 @@ import streamlit as st
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,30}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-# Accepts an optional leading "+" followed by 10-15 digits (covers Indian
-# 10-digit mobile numbers with or without a country code, e.g. +91XXXXXXXXXX).
-PHONE_RE = re.compile(r"^\+?[0-9]{10,15}$")
+# Exactly 10 digits - plain Indian mobile numbers only, no country code,
+# no "+" prefix. Spaces/dashes are stripped before this is checked.
+PHONE_RE = re.compile(r"^[0-9]{10}$")
+
+OTP_LENGTH = 6
+OTP_VALID_MINUTES = 10
+OTP_MAX_ATTEMPTS = 5
 
 
 def _get_connection_string():
@@ -134,7 +144,7 @@ def create_user(username, email, phone, password):
     if not EMAIL_RE.match(email):
         return False, "Enter a valid email address."
     if not PHONE_RE.match(phone):
-        return False, "Enter a valid phone number (10-15 digits, optional leading +)."
+        return False, "Enter a valid 10-digit phone number."
     if len(password) < 8:
         return False, "Password must be at least 8 characters."
 
@@ -154,6 +164,126 @@ def create_user(username, email, phone, password):
             except psycopg2.errors.UniqueViolation:
                 conn.rollback()
                 return False, "That username, email, or phone number is already registered."
+
+
+def check_availability(username, email, phone):
+    """Validates format and checks username/email/phone aren't already
+    taken - WITHOUT creating a user. Called before an OTP is sent so we
+    don't burn an email on a signup that would fail anyway.
+    Returns (True, None) or (False, error_message)."""
+    username = username.strip()
+    email = email.strip().lower()
+    phone = phone.strip().replace(" ", "").replace("-", "")
+
+    if not USERNAME_RE.match(username):
+        return False, "Username must be 3-30 characters: letters, numbers, or underscore only."
+    if not EMAIL_RE.match(email):
+        return False, "Enter a valid email address."
+    if not PHONE_RE.match(phone):
+        return False, "Enter a valid 10-digit phone number."
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM users WHERE username = %s OR email = %s OR phone = %s LIMIT 1;",
+                (username, email, phone),
+            )
+            if cur.fetchone():
+                return False, "That username, email, or phone number is already registered."
+    return True, None
+
+
+def _get_smtp_config():
+    """Reads SMTP creds from Streamlit secrets (deployed) or env vars
+    (local .env). Raises with a clear setup message if neither is set."""
+    try:
+        cfg = st.secrets["smtp"]
+        return {
+            "host": cfg.get("host", "smtp.gmail.com"),
+            "port": int(cfg.get("port", 587)),
+            "user": cfg["user"],
+            "password": cfg["password"],
+            "from_addr": cfg.get("from_addr", cfg["user"]),
+        }
+    except Exception:
+        pass
+
+    user = os.getenv("SMTP_USER")
+    password = os.getenv("SMTP_PASSWORD")
+    if not user or not password:
+        raise RuntimeError(
+            "No SMTP configured. Add a [smtp] section (host/port/user/password) "
+            "to .streamlit/secrets.toml, or set SMTP_USER/SMTP_PASSWORD "
+            "(and optionally SMTP_HOST/SMTP_PORT/SMTP_FROM) in your .env."
+        )
+    return {
+        "host": os.getenv("SMTP_HOST", "smtp.gmail.com"),
+        "port": int(os.getenv("SMTP_PORT", "587")),
+        "user": user,
+        "password": password,
+        "from_addr": os.getenv("SMTP_FROM", user),
+    }
+
+
+def _generate_otp():
+    """Cryptographically random numeric OTP (not random.random - that's
+    not safe for anything security-adjacent)."""
+    return "".join(str(pysecrets.randbelow(10)) for _ in range(OTP_LENGTH))
+
+
+def _hash_otp(otp):
+    return hashlib.sha256(otp.encode("utf-8")).hexdigest()
+
+
+def send_otp_email(to_email, otp):
+    """Emails a one-time verification code. Raises on failure so the
+    caller can surface a real error instead of silently pretending
+    it sent."""
+    msg = MIMEText(
+        f"Your verification code is {otp}.\n\n"
+        f"It expires in {OTP_VALID_MINUTES} minutes. "
+        "If you didn't request this, you can ignore this email."
+    )
+    msg["Subject"] = "Your verification code - DA Job Market Tool"
+    cfg = _get_smtp_config()
+    msg["From"] = cfg["from_addr"]
+    msg["To"] = to_email
+
+    context = ssl.create_default_context()
+    with smtplib.SMTP(cfg["host"], cfg["port"]) as server:
+        server.starttls(context=context)
+        server.login(cfg["user"], cfg["password"])
+        server.sendmail(cfg["from_addr"], [to_email], msg.as_string())
+
+
+def make_otp_challenge(email):
+    """Generates a fresh OTP, emails it, and returns a bundle to stash
+    in st.session_state - only the hash + expiry + attempt count, never
+    the raw code."""
+    otp = _generate_otp()
+    send_otp_email(email, otp)
+    return {
+        "otp_hash": _hash_otp(otp),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=OTP_VALID_MINUTES)).isoformat(),
+        "attempts": 0,
+    }
+
+
+def verify_otp(challenge, entered_otp):
+    """Checks an entered code against a challenge dict from
+    make_otp_challenge. Mutates challenge['attempts'] in place on a
+    wrong guess (the caller's session_state dict, since dicts are
+    passed by reference). Returns (True, None) or (False, error_message)."""
+    if challenge is None:
+        return False, "No verification code on file - request a new one."
+    if challenge["attempts"] >= OTP_MAX_ATTEMPTS:
+        return False, "Too many incorrect attempts. Request a new code."
+    if datetime.now(timezone.utc) > datetime.fromisoformat(challenge["expires_at"]):
+        return False, "That code expired. Request a new one."
+    if _hash_otp((entered_otp or "").strip()) != challenge["otp_hash"]:
+        challenge["attempts"] += 1
+        return False, "Incorrect code."
+    return True, None
 
 
 def authenticate_user(username, password):
