@@ -289,57 +289,42 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 .app-footer a:hover { text-decoration: underline; }
 
 /* Auth gate (login / sign up) */
-.auth-wrapper { max-width: 460px; margin: 2.5rem auto 0; }
-.auth-hero {
+.auth-wrapper { max-width: 420px; margin: 3rem auto 0; }
+.auth-icon {
+    width: 52px; height: 52px; margin: 0 auto 1rem; border-radius: 14px;
     background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
-    border-radius: 20px 20px 0 0;
-    padding: 2.2rem 2rem 1.9rem;
-    text-align: center;
-    box-shadow: 0 10px 30px rgba(79,63,240,0.25);
-}
-.auth-badge {
-    display: inline-flex; align-items: center; gap: 0.4rem;
-    background: rgba(255,255,255,0.16); color: #FFFFFF;
-    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em;
-    padding: 0.35rem 0.85rem; border-radius: 999px; margin-bottom: 0.9rem;
+    display: flex; align-items: center; justify-content: center; font-size: 1.5rem;
+    box-shadow: 0 6px 16px rgba(79,63,240,0.25);
 }
 .auth-title {
-    font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 1.9rem;
-    color: #FFFFFF; margin-bottom: 0.4rem;
+    font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 1.6rem;
+    color: var(--text); text-align: center; margin-bottom: 0.35rem;
 }
-.auth-subtitle { color: rgba(255,255,255,0.85); font-size: 0.9rem; line-height: 1.5; max-width: 360px; margin: 0 auto; }
-.auth-card {
-    background: var(--card-bg);
-    border-radius: 0 0 20px 20px;
-    padding: 1.8rem 2rem 2rem;
-    box-shadow: 0 10px 30px rgba(26,27,46,0.08);
-    border: 1px solid var(--border);
-    border-top: none;
+.auth-subtitle { color: var(--text-muted); font-size: 0.88rem; text-align: center; line-height: 1.5; margin-bottom: 1.8rem; }
+
+.auth-wrapper [data-testid="stVerticalBlockBorderWrapper"] {
+    border-radius: 16px !important; border: 1px solid var(--border) !important;
+    box-shadow: 0 4px 20px rgba(26,27,46,0.06) !important; padding: 0.4rem;
 }
-.auth-card [data-testid="stForm"] { border: none; padding: 0; }
-.auth-card .stTabs [data-baseweb="tab-list"] {
-    gap: 0.3rem; background: var(--bg); padding: 0.3rem; border-radius: 12px; margin-bottom: 1.3rem;
+.auth-wrapper .stTabs [data-baseweb="tab-list"] {
+    gap: 0.25rem; background: var(--bg); padding: 0.25rem; border-radius: 10px; margin-bottom: 1.4rem;
 }
-.auth-card .stTabs [data-baseweb="tab"] {
-    border-radius: 9px; font-weight: 600; color: var(--text-muted);
-    padding: 0.5rem 0; flex: 1; justify-content: center;
+.auth-wrapper .stTabs [data-baseweb="tab"] {
+    border-radius: 8px; font-weight: 600; color: var(--text-muted); font-size: 0.88rem;
+    padding: 0.45rem 0; flex: 1; justify-content: center;
 }
-.auth-card .stTabs [aria-selected="true"] {
-    background: var(--card-bg) !important; color: var(--primary) !important;
-    box-shadow: 0 2px 8px rgba(26,27,46,0.08);
+.auth-wrapper .stTabs [aria-selected="true"] { background: var(--card-bg) !important; color: var(--primary) !important; }
+.auth-wrapper [data-testid="stTextInput"] label { font-weight: 600; color: var(--text); font-size: 0.85rem; }
+.auth-wrapper [data-testid="stTextInput"] input {
+    border-radius: 9px; border: 1.3px solid var(--border); padding: 0.5rem 0.75rem; font-size: 0.92rem;
 }
-.auth-card [data-testid="stTextInput"] label { font-weight: 600; color: var(--text); font-size: 0.87rem; }
-.auth-card [data-testid="stTextInput"] input {
-    border-radius: 10px; border: 1.5px solid var(--border); padding: 0.55rem 0.8rem;
-}
-.auth-card [data-testid="stTextInput"] input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); }
-.auth-card .stButton button, .auth-card .stFormSubmitButton button {
+.auth-wrapper [data-testid="stTextInput"] input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); }
+.auth-wrapper .stFormSubmitButton button {
     background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%) !important;
-    border: none !important; border-radius: 10px !important; font-weight: 600 !important;
-    padding: 0.65rem 0 !important; margin-top: 0.4rem;
-    box-shadow: 0 6px 16px rgba(79,63,240,0.3) !important; transition: transform 0.15s ease !important;
+    border: none !important; border-radius: 9px !important; font-weight: 600 !important;
+    padding: 0.55rem 0 !important; margin-top: 0.3rem; transition: opacity 0.15s ease !important;
 }
-.auth-card .stButton button:hover, .auth-card .stFormSubmitButton button:hover { transform: translateY(-1px); }
+.auth-wrapper .stFormSubmitButton button:hover { opacity: 0.92; }
 .user-bar { text-align: right; color: var(--text-muted); font-size: 0.85rem; padding: 0.4rem 0 0.2rem; }
 </style>
 """
@@ -410,62 +395,58 @@ def render_auth_gate():
         st.markdown('<div class="auth-wrapper">', unsafe_allow_html=True)
 
         st.markdown(
-            '<div class="auth-hero">'
-            '<div class="auth-badge">💼 JOB MARKET INTELLIGENCE</div>'
-            '<div class="auth-title">Welcome</div>'
+            '<div class="auth-icon">💼</div>'
+            '<div class="auth-title">Welcome back</div>'
             '<p class="auth-subtitle">Log in or create an account to explore live postings, '
-            'skill trends, and the AI research assistant.</p>'
-            '</div>',
+            'skill trends, and the AI research assistant.</p>',
             unsafe_allow_html=True,
         )
 
-        st.markdown('<div class="auth-card">', unsafe_allow_html=True)
+        with st.container(border=True):
+            login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
 
-        login_tab, signup_tab = st.tabs(["🔑  Log in", "✨  Sign up"])
+            with login_tab:
+                with st.form("login_form"):
+                    username = st.text_input("Username", placeholder="Enter your username")
+                    password = st.text_input("Password", type="password", placeholder="Enter your password")
+                    submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
+                if submitted:
+                    if not username or not password:
+                        st.error("Enter both a username and password.")
+                    else:
+                        user = auth.authenticate_user(username, password)
+                        if user:
+                            st.session_state.user = user
+                            st.rerun()
+                        else:
+                            st.error("Incorrect username or password.")
 
-        with login_tab:
-            with st.form("login_form"):
-                username = st.text_input("👤 Username", placeholder="Enter your username")
-                password = st.text_input("🔒 Password", type="password", placeholder="Enter your password")
-                submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
-            if submitted:
-                if not username or not password:
-                    st.error("Enter both a username and password.")
-                else:
-                    user = auth.authenticate_user(username, password)
-                    if user:
-                        st.session_state.user = user
+            with signup_tab:
+                with st.form("signup_form"):
+                    new_username = st.text_input(
+                        "Choose a username", placeholder="letters, numbers, underscore",
+                        help="3-30 characters: letters, numbers, or underscore only",
+                    )
+                    new_email = st.text_input("Email", placeholder="you@example.com")
+                    new_phone = st.text_input(
+                        "Phone number", placeholder="+919876543210",
+                        help="10-15 digits, optional leading +",
+                    )
+                    new_password = st.text_input(
+                        "Choose a password", type="password", placeholder="At least 8 characters",
+                        help="At least 8 characters",
+                    )
+                    submitted = st.form_submit_button("Create account", type="primary", use_container_width=True)
+                if submitted:
+                    ok, result = auth.create_user(new_username, new_email, new_phone, new_password)
+                    if ok:
+                        st.session_state.user = {
+                            "id": result["id"], "username": result["username"], "email": result["email"],
+                        }
                         st.rerun()
                     else:
-                        st.error("Incorrect username or password.")
+                        st.error(result)
 
-        with signup_tab:
-            with st.form("signup_form"):
-                new_username = st.text_input(
-                    "👤 Choose a username", placeholder="letters, numbers, underscore",
-                    help="3-30 characters: letters, numbers, or underscore only",
-                )
-                new_email = st.text_input("📧 Email", placeholder="you@example.com")
-                new_phone = st.text_input(
-                    "📱 Phone number", placeholder="+919876543210",
-                    help="10-15 digits, optional leading +",
-                )
-                new_password = st.text_input(
-                    "🔒 Choose a password", type="password", placeholder="At least 8 characters",
-                    help="At least 8 characters",
-                )
-                submitted = st.form_submit_button("Create account", type="primary", use_container_width=True)
-            if submitted:
-                ok, result = auth.create_user(new_username, new_email, new_phone, new_password)
-                if ok:
-                    st.session_state.user = {
-                        "id": result["id"], "username": result["username"], "email": result["email"],
-                    }
-                    st.rerun()
-                else:
-                    st.error(result)
-
-        st.markdown('</div>', unsafe_allow_html=True)  # .auth-card
         st.markdown('</div>', unsafe_allow_html=True)  # .auth-wrapper
 
     st.stop()
