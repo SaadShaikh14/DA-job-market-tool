@@ -70,6 +70,20 @@ def _get_pool():
     )
 
 
+def _is_connection_alive(conn):
+    """Cheap health probe. Neon (free tier) suspends its compute after a
+    few minutes idle, which silently kills any connection sitting in the
+    pool - the connection object looks fine until the next real query
+    throws OperationalError. Catching that here means callers never see
+    it; they just transparently get a fresh connection instead."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1;")
+        return True
+    except Exception:
+        return False
+
+
 class _PooledConnection:
     """Context-manager wrapper so callers can keep using
     `with get_connection() as conn:` unchanged, while the underlying
@@ -78,7 +92,14 @@ class _PooledConnection:
 
     def __enter__(self):
         self._pool = _get_pool()
-        self._conn = self._pool.getconn()
+        conn = self._pool.getconn()
+        if not _is_connection_alive(conn):
+            # Stale/dead connection (e.g. Neon's compute went to sleep
+            # and woke back up) - discard it and grab a fresh one instead
+            # of handing back something broken.
+            self._pool.putconn(conn, close=True)
+            conn = self._pool.getconn()
+        self._conn = conn
         return self._conn
 
     def __exit__(self, exc_type, exc, tb):
@@ -89,7 +110,14 @@ class _PooledConnection:
                 self._conn.rollback()
             except Exception:
                 pass
-        self._pool.putconn(self._conn)
+        # A connection-level failure (vs. an application error like a
+        # UniqueViolation) means the connection itself is broken - close
+        # it instead of returning it to the pool for the next caller to
+        # trip over the same dead connection.
+        broken = exc_type is not None and issubclass(
+            exc_type, (psycopg2.OperationalError, psycopg2.InterfaceError)
+        )
+        self._pool.putconn(self._conn, close=broken)
 
 
 def get_connection():
